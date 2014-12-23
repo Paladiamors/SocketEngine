@@ -16,16 +16,31 @@ from client import Client
 port = 12000
 
 class Server:
+    """
+    The base server will have a some handlers registered to the system
+    Additional functionality of the server can be added by subclassing the server class and registering the functionality to the server
+    state information and handling of that state information can be handled by the addition of modules to the class
     
+    3 main threads will run for this server:
+    1. an accept thread that handles all incoming connections
+    2. a main loop thread to handle processing of all msgs
+    3. a send thread that handles sending of msgs to clients
+    """
     def __init__(self, port  = 12000):
     
         self.port = port
-        self.activeClients = {} #dict of socket:protocol objects
+        self.socketProtocolMap = {} #dict of socket:protocol objects, for use by select
+        self.protocolIdMap = {} #dict mapping protocols to ids
+        self.idProtocolMap = {} #dict containing mapping of ids to protocols
+        self.socketIdCounter = 1
+        
         self.acceptQueue = Queue.Queue()
         self.serverSocket = sockLib.serverSocket(port)
         self.interruptSocket = None
         self.running = True
+        self.handlers = {"NOP": None} #used for handling msgs
         
+        self.sendQueue = Queue.Queue() #the queue used to send the data to the clients (stored as protocol, msg) pairs
 
     def _acceptConnections(self):
         """
@@ -42,7 +57,7 @@ class Server:
             self.acceptQueue.put(sock)
             
             if self.interruptSocket:
-                self.interruptSocket.sendData("connection accepted")
+                self.interruptSocket.sendData({"msg": "NOP"})
     
         print "server no longer accepting connections"
         
@@ -54,8 +69,21 @@ class Server:
             
             print "adding socket to active client"
             sock = self.acceptQueue.get()
-            self.activeClients[sock] = sockLib.JsonProtocol(sock)
-
+            protocol = sockLib.JsonProtocol(sock)
+            self.socketProtocolMap[sock] = protocol
+            self.protocolIdMap[protocol] = self.socketIdCounter
+            self.idProtocolMap[self.socketIdCounter] = protocol
+            self.socketIdCounter += 1
+    
+    def _removeConnection(self, sock):
+        """
+        when a socket has disconnected have it removed
+        """
+        
+        protocol = self.socketProtocolMap.pop(sock)
+        protocolId = self.protocolIdMap.pop(protocol)
+        self.idProtocolMap.pop(protocolId)
+        
     def startServer(self):
         """
         starts the server by performing 2 tasks:
@@ -91,36 +119,53 @@ class Server:
         sock = sockLib.clientSocket(sockLib.gethostname(), self.port)
         sock.close()
         
-        self.interruptSocket.sendData("stopping")
-        
+        self.interruptSocket.sendData({"msg": "NOP"})
+    
+    def handleMsg(self, msg):
+        """
+        generic function used for handling of msgs
+        """
+        try:
+            handler = self.handlers.get(msg["msg"], None)
+            if handler:
+                handler(msg)
+        except:
+            print "processing of msg failed", msg
+            
+            
     def mainLoop(self):
-        
+        """
+        the main loop for processing incoming messages
+        """
         while self.running:
 
             #bunch of tasks to be handle on each pass of the main loop
             #if the number of tasks here becomes large, can switch this part out into a separate loop
             self._addConnections()
             
-            if not self.activeClients.keys():
+            if not self.socketProtocolMap.keys():
                 time.sleep(0.1)
             else:
-                r,w,e  = select.select(self.activeClients.keys(), [], [])
+                r,w,e  = select.select(self.socketProtocolMap.keys(), [], [])
                 
                 for sock in r:
-                    data = self.activeClients[sock].recvData()
+                    data = self.socketProtocolMap[sock].recvData()
                 
-                if data is None:
-                    print "client has disconnected"
-                    self.activeClients.pop(sock)
-                else:
-                    print data
+                    if data is None:
+                        print "client has disconnected"
+                        self._removeConnection(sock)
+                    elif data:
+                        #there is some data for processing
+                        map(self.handleMsg, data)
+                    else:
+                        #no data for processing
+                        pass
 
         print "main loop stopping"
     
     
     #### Define msg handlers here:
-        
-
+    
 if __name__ == "__main__":
 
     server = Server(port)
