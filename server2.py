@@ -13,7 +13,7 @@ import threading
 
 class BaseServer:
     
-    def __init__(self, port):
+    def __init__(self, port, *modules):
         
         self.port = port
         self.serverSocket = None
@@ -29,22 +29,46 @@ class BaseServer:
         #the mapping of handlers for use by the server
         self.handlers = {"NOK": None}
     
+        #modules for use with the server
+        self.modules = [module(self) for module in modules]
+        #hooks to handle certain activities
+        
+        #accept and remove connection hooks will take in a fd parameter to manage the activity 
+        self.acceptConnectionHooks = [] 
+        self.removeConnectionHooks = []
+    
+        self.registerModules()
+        
+    def registerModules(self):
+        """
+        given the list of modules, registers them into the server
+        """
+        
+        for module in self.modules:
+            module.register()
+            
+
     def pollGenerator(self):
         while self.running:
             for fd, event in self.pollObject.poll():
                 yield fd, event
         
         print "pollGenerator has stopped"
+
     def acceptConnection(self):
         """
         accepts a new connection 
         """
         
         newConnection, address = self.serverSocket.accept()
-        print "accepting new connection", newConnection.fileno()
-        self.fdSocketMap[newConnection.fileno()] = newConnection
-        self.fdProtocolMap[newConnection.fileno()] = sockLib2.JsonProtocol(newConnection)
+        
+        fd = newConnection.fileno()
+        print "accepting new connection", fd
+        self.fdSocketMap[fd] = newConnection
+        self.fdProtocolMap[fd] = sockLib2.JsonProtocol(newConnection)
         self.pollObject.register(newConnection, select.POLLIN)
+        
+        [hook(fd) for hook in self.acceptConnectionHooks]
         
     def removeConnection(self, fd):
         """
@@ -56,7 +80,7 @@ class BaseServer:
         self.fdProtocolMap.pop(fd)
         self.pollObject.unregister(fd)
 
-
+        [hook(fd) for hook in self.removeConnectionHooks]
     def startServer(self):
         
         print "starting server"
@@ -115,6 +139,14 @@ class BaseServer:
                     
         print "mainLoop has stopped"
     
+    def sendMsg(self, fd, msg):
+        """
+        fd = the file descriptor to send the msg to
+        msg the msg to send to the fd
+        """
+        
+        self.fdProtocolMap[fd].queueMsg(msg)
+        self.pollObject.modify(fd, select.POLLOUT)
         
 if __name__ == "__main__":
     import client2
@@ -127,7 +159,7 @@ if __name__ == "__main__":
     
     time.sleep(0.5)
     
-    clients = [client2.BaseClient2() for x in range(5)]
+    clients = [client2.BaseClient() for x in range(5)]
     [client.startClient() for client in clients]
     
     [client.connect(sockLib2.gethostname(), port) for client in clients]

@@ -13,50 +13,39 @@ import threading
 import time
 
 class BaseClient:
-    
-    def __init__(self, host, port):
-        
-        self.host = host
-        self.port = port
-        self.sock = None
-        self.protocol = None
-        
-    def connect(self):
-        """
-        connects to a server
-        """
-        self.sock = sockLib2.clientSocket(self.host, self.port)
-        self.protocol = sockLib2.JsonProtocol(self.sock)
-
-
-    def disconnect(self):
-        """
-        disconnects from the server
-        """
-        
-        self.sock.close()
-        self.protocol = None
-        
-
-class BaseClient2:
     """
     new version of the client that uses the poll system to manage reading and writing of data to connections
     This version of the client can handle multiple clients
     Note we use pipes in this case as an interrupt system (rather hacky since we have no server socket for management of communication
     """
-    def __init__(self):
+    def __init__(self, *modules):
         
         self.fdSocketMap = {} #mapping of fd to sockets
         self.fdProtocolMap = {} #mapping of fd to protocols
         
         self.pollObject = select.poll()
         self.connectionId = 1
+        
+        self.modules = [module(self) for module in modules]
+        self.moduleMap = {} #provides the module mapping namespace
+        self.handlers = {}
     
         self.interruptRPipe = None
         self.interruptWPipe = None
         
         self.running = True
     
+        self.registerModules()
+
+    def registerModules(self):
+        """
+        registers the call back of the module
+        adds the name space of the module to a module map dict... allows access of the module by the user
+        """
+        for module in self.modules:
+            module.register()
+            self.moduleMap[module.namespace] = module
+         
     def connect(self, host, port):
         """
         creates a connection to a host
