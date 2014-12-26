@@ -11,11 +11,11 @@ import threading
 import select
 import time
 import random
-from client import Client
+from client import BaseClient
 
-port = 12000
+port = 14003
 
-class Server:
+class BaseServer:
     """
     The base server will have a some handlers registered to the system
     Additional functionality of the server can be added by subclassing the server class and registering the functionality to the server
@@ -168,11 +168,11 @@ class Server:
     
 if __name__ == "__main__":
 
-    server = Server(port)
+    server = BaseServer(port)
     server.startServer()
     
     time.sleep(0.5)
-    clients = [Client(port) for x in range(5)]
+    clients = [sockLib.JsonProtocol(sockLib.clientSocket(sockLib.gethostname(), port)) for x in range(5)]
     
     time.sleep(0.1)
     for x in range(10):
@@ -180,7 +180,7 @@ if __name__ == "__main__":
         client.sendData({"msg": "magic"})
 
     for client in clients:
-        client.socket.close()
+        client.sock.close()
         
     time.sleep(0.1)
     server.stopServer()

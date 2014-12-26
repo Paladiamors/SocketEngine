@@ -3,6 +3,9 @@ Created on Feb 24, 2014
 
 for this library, we make the assumption that we know the length of the msg when sending
 (not really for streaming data when the content is not known)
+
+new version to be used with select.poll
+Makes an update to the sendData function --> the server will register the socket for sending and do the unregister when there is no msgs in the buffer
 '''
 
 import json
@@ -26,10 +29,12 @@ class JsonProtocol:
     def __init__(self, sock):
         self.sock = sock
         self.recvBuffer = "" #string for storage of incoming msgs
+        self.msgBuffer = [] #a buffer of msgs
+        self.sendBuffer = "" #a buffer with the current msg for sending
         self.closed = False
         self.readHeader = True
         self.msgSize = 0
-        self.index = 0
+        self.index = 0 #the index of upto where the msg has been sent
         self.msgList = []
 
     def _int2Qbyte(self, value):
@@ -56,32 +61,60 @@ class JsonProtocol:
         values = [ord(char)*256**(3-x) for x,char in enumerate(qbyte)]
         return sum(values)
 
-    def sendData(self, data):
+
+    def queueMsg(self, msg):
         """
-        data = data structure to convert into json and sends it to the other process
-        we accept that this can block (assume that this is not being used in a select)
+        given a msg, appends the data to the buffer
+        """
+        self.msgBuffer.append(msg)
+    
+    def hasDataToSend(self):
+        """
+        a check to determine if this connection has data to send to the client
+        if there are msgs in the msg buffer or if there are incomplete msgs, then return true
+        else return false
+        """
+        
+        if self.msgBuffer or self.index < self.msgSize:
+            return True
+        else:
+            return False
+
+    
+    def sendData(self):
+        """
+        this function takes out data from the msg buffer and places it into the send buffer --> this is read and sent out to the client
+        using poll, when the socket is available for writing, it will send out more data to the client
         
         returns the number of bytes sent
         """
 
-        #converts the data into json
-        data = json.dumps(data)
+
+        #if there is no msg in the buffer for sending, loads it and prepares it for sending
+        if self.msgBuffer and self.index == 0:
+            #converts the msg in to the send buffer, calculates the msg size, adds that into the header
+            #adds the size of the header into the msg size
+            self.sendBuffer = json.dumps(self.msgBuffer.pop())
+            self.msgSize = len(self.sendBuffer)
+            qbyte = self._int2Qbyte(self.msgSize)
+            data = "".join([qbyte, self.sendBuffer])
+            self.msgSize += 4 #for adding the qbyte into the msg 
         
-        bytesSent = 0
-        msgSize = len(data)
-        qbyte = self._int2Qbyte(msgSize)
-        data = "".join([qbyte, data])
-        msgSize += 4 #for adding the qbyte into the msg        
-        
-        index = 0
-        while bytesSent < msgSize:
-            sent = self.sock.send(data[index:index+(msgSize-index)])
+        #performs sending of the msg
+        if self.index < self.msgSize:
+            sent = self.sock.send(data[self.index:])
+            self.index += sent
             if sent == 0:
                 raise Exception("Socket was closed during sending")
-            
-            bytesSent += sent
+        
+        #sending is complete, reset the state to the inital state
+        #note: we don't use a while loop here to send msgs because that can cause this process to block
+        if self.index == self.msgSize:
+            self.sendBuffer = ''
+            self.index = 0
+            self.msgSize = 0
 
-        return bytesSent
+        return sent
     
     def recvData(self):
         """

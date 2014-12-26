@@ -6,15 +6,28 @@ Created on Dec 23, 2014
 
 import sockLib
 
-class Client:
+class BaseClient:
     
-    def __init__(self, port):
+    def __init__(self, host, port):
         
+        self.host = host
         self.port = port
-        self.socket = sockLib.clientSocket(sockLib.gethostname(), port)
-        self.protocol = sockLib.JsonProtocol(self.socket)
+        self.sock = None
+        self.protocol = None
         
-    def sendData(self, data):
+    def connect(self):
+        """
+        connects to a server
+        """
+        self.sock = sockLib.clientSocket(self.host, self.port)
+        self.protocol = sockLib.JsonProtocol(self.sock)
+
+
+    def disconnect(self):
+        """
+        disconnects from the server
+        """
         
-        print "sending data", data
-        self.protocol.sendData(data)
+        self.sock.close()
+        self.protocol = None
+        
